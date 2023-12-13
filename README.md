@@ -190,6 +190,9 @@ Queremos fazer análise dos preços de combustíveis por `produto` e `sigla_uf`.
 
 Nossa chave será formada pelos campos `produto`, `sigla_uf`, `data_coleta`, `cnpj_revenda`
 
+Um exemplo de pergunta do negócio:
+- Quais os preços mínimo, médio e máximo de venda da Gasolina para o estado do Rio de Janeiro em 2022?
+
 ## Criando o keyspace e tabela no Cassandra
 
 Usando o `cqlsh` no container do Cassandra, criamos um keyspace `anp` para a nossa base de dados
@@ -244,8 +247,10 @@ spark = (
 Fazendo a conversão para dataframe do Spark e salvando na base do Cassandra:
 
 ```py
+# Dataframe Spark a partir do dataframe do Pandas
 df_spark = spark.createDataFrame(df)
 
+# Adiciona dados em `anp.precos_combustiveis_por_produto_e_uf`
 df_spark.write.format("org.apache.spark.sql.cassandra")
 .options(**CASSANDRA_CONF)
 .options(keyspace="anp", table="precos_combustiveis_por_produto_e_uf")
@@ -253,7 +258,43 @@ df_spark.write.format("org.apache.spark.sql.cassandra")
 .save()
 ```
 
-Houve problema de OutOfMemory da JVM em uma máquina com 16GB de RAM. A solução foi adaptar o código para o uso de funções parametrizadas pelo campo `ano` para se trabalhar com dataframes menores. Foi possivel rodar a ingestão ano a ano (2004 a 2023) conforme evidenciado no notebook.
+Houve problema de OutOfMemory da JVM em uma máquina com 16GB de RAM. A solução foi adaptar o código para o uso de funções parametrizadas pelo campo `ano` para se trabalhar com dataframes menores. Foi possivel rodar a ingestão ano a ano (2004 a 2023) conforme evidenciado no notebook de ingestão.
+
+## Consulta aos dados
+
+Aproveitando que já temos como configurar uma sessão Spark conectada com o Cassandra, podemos fazer uso do PySpark para gerar respostas para o negócio através de consultas SQL.
+
+Criando uma VIEW:
+
+```py
+spark.read
+.format("org.apache.spark.sql.cassandra")
+.options(**CASSANDRA_CONF)
+.options(keyspace="anp", table="precos_combustiveis_por_produto_e_uf")
+.load()
+.createOrReplaceTempView("vw_precos")  
+```
+
+Sobre a pergunta do negócio:
+- Quais os preços mínimo, médio e máximo de venda da Gasolina para o estado do Rio de Janeiro em 2022?
+
+```py
+spark.sql("""
+    SELECT MAX(preco_venda), MIN(preco_venda), AVG(preco_venda)
+    FROM vw_precos
+    WHERE produto = 'Gasolina' AND sigla_uf = 'RJ' AND ano = 2022
+""").show()
+```
+
+O Spark interage com o serviço do Cassandra para executar a consulta e obter o resultado:
+
+```
++--------------------+--------------------+--------------------+
+|    max(preco_venda)|    min(preco_venda)|    avg(preco_venda)|
++--------------------+--------------------+--------------------+
+|8.990000000000000000|4.390000000000000000|6.630403699883975...|
++--------------------+--------------------+--------------------+
+```
 
 
 ## Referências

@@ -1,5 +1,7 @@
 # Cassandra Preços Combustíveis
 
+Projeto em PySpark para ingestão e análise de dados com Apache Cassandra.
+
 Requer que o Apache Cassandra seja executado em outro container de nome "cassandra" na rede "cassandra-network".
 
 ## SQL vs NoSQL
@@ -29,7 +31,7 @@ Características dos bancos de dados NoSQL:
 
 - Bases de dados não relacionais, onde os dados podem ser estruturados em documentos, chave-valor, grafos, ou formato colunar
 - São escaláveis horizontalmente, com adição de mais nós de processamento
-- Infraestrutura mais elástica, podendo escalar pra cima ou pra baixo com mais facilidade para acomodar as mudanças de uso ou volume de dados
+- Infraestrutura mais elástica, podendo escalar pra cima ou pra baixo com mais facilidade para acomodar as mudanças de uso de processamento ou volume de dados
 - Os dados tem esquemas flexíveis e dinâmicos ou são não estruturados
 - Usam linguagens de domínio específicas, algumas vezes semelhantes ao SQL
 - Não necessariamente seguem as propriedades ACID (atomicidade, consistência, isolamento, durabilidade) na leitura e escrita de dados
@@ -51,11 +53,13 @@ O Apache Cassandra é um banco de dados do tipo não relacional (NoSQL) e coluna
 
 Criado originalmente pelo Facebook, com arquitetura inspirada pelo DynamoDB da Amazon e modelo de dados baseado no BigTable do Google. Evolui como open source desde 2008.
 
-No contexto do teorema CAP (disponibilidade, consistência, tolerância a partição) O Cassandra é considerado um banco AP (disponibilidade, tolerância a partição) tendo como principais características a alta escalabilidade e distribuição dos nós de processamento. A leitura dos dados pode não ter consistência, considerando que o Cassandra opera com mecanismos de reorganização frequente do cluster.
+No contexto do teorema CAP (disponibilidade, consistência, tolerância a partição) o Cassandra é considerado um banco AP (disponibilidade, tolerância a partição) tendo como principais características a alta escalabilidade e distribuição dos nós de processamento. A leitura dos dados pode não ter consistência, considerando que o Cassandra opera com mecanismos de reorganização frequente do cluster.
 
 ## Iniciando o Cassandra via Docker e acessando a console
 
-Optamos por usar a instalação do Cassandra via Docker, pela facilidade de inicialização e manutenção para as finalidades deste projeto.
+Optamos por usar a instalação do Cassandra via Docker, em host único, pela facilidade de inicialização e manutenção para as finalidades deste projeto.
+
+![Infraestrutura](./assets/host_cassandra.png)
 
 Criamos uma rede do Docker nomeada `cassandra-network` para que outros containters possam interagir com o serviço do Cassandra.
 
@@ -190,8 +194,8 @@ Queremos fazer análise dos preços de combustíveis por `produto` e `sigla_uf`.
 
 Nossa chave será formada pelos campos `produto`, `sigla_uf`, `data_coleta`, `cnpj_revenda`
 
-Um exemplo de pergunta do negócio:
-- Quais os preços mínimo, médio e máximo de venda da Gasolina para o estado do Rio de Janeiro em 2022?
+Um exemplo de objetivo do negócio:
+- Comparação do comportamento dos preços de venda da Gasolina entre os estados do Rio de Janeiro e São Paulo durante o ano de 2022.
 
 ## Criando o keyspace e tabela no Cassandra
 
@@ -258,13 +262,11 @@ df_spark.write.format("org.apache.spark.sql.cassandra")
 .save()
 ```
 
-Houve problema de OutOfMemory da JVM em uma máquina com 16GB de RAM. A solução foi adaptar o código para o uso de funções parametrizadas pelo campo `ano` para se trabalhar com dataframes menores. Foi possivel rodar a ingestão ano a ano (2004 a 2023) conforme evidenciado no notebook de ingestão.
+Houve problema de OutOfMemory da JVM em uma máquina com 16GB de RAM. A solução foi adaptar o código para o uso de funções parametrizadas pelo campo `ano` visando trabalhar com dataframes menores. Foi possivel rodar a ingestão ano a ano (2004 a 2023) conforme evidenciado no notebook de ingestão.
 
 ## Consulta aos dados
 
-Aproveitando que já temos como configurar uma sessão Spark conectada com o Cassandra, podemos fazer uso do PySpark para gerar respostas para o negócio através de consultas SQL.
-
-Criando uma VIEW:
+Aproveitando que já temos como configurar uma sessão Spark conectada com o Cassandra, podemos fazer uso do PySpark para gerar respostas para o negócio através de consultas SQL sobre uma view `vw_precos`:
 
 ```py
 spark.read
@@ -272,11 +274,8 @@ spark.read
 .options(**CASSANDRA_CONF)
 .options(keyspace="anp", table="precos_combustiveis_por_produto_e_uf")
 .load()
-.createOrReplaceTempView("vw_precos")  
+.createOrReplaceTempView("vw_precos")
 ```
-
-Sobre a pergunta do negócio:
-- Quais os preços mínimo, médio e máximo de venda da Gasolina para o estado do Rio de Janeiro em 2022?
 
 ```py
 spark.sql("""
@@ -286,16 +285,34 @@ spark.sql("""
 """).show()
 ```
 
-O Spark interage com o serviço do Cassandra para executar a consulta e obter o resultado:
+Ex: quais os preços mínimo, médio e máximo de venda da Gasolina para o estado do Rio de Janeiro em 2022?
 
-```
-+--------------------+--------------------+--------------------+
-|    max(preco_venda)|    min(preco_venda)|    avg(preco_venda)|
-+--------------------+--------------------+--------------------+
-|8.990000000000000000|4.390000000000000000|6.630403699883975...|
-+--------------------+--------------------+--------------------+
+```py
+spark.sql("""
+    SELECT MAX(preco_venda), MIN(preco_venda), AVG(preco_venda)
+    FROM vw_precos
+    WHERE produto = 'Gasolina' AND sigla_uf = 'RJ' AND ano = 2022
+""").show()
 ```
 
+Ou respondemos as questões do negócio através de manipulações sobre um dataframe Spark:
+
+```py
+df_precos = (
+    spark.read
+    .format("org.apache.spark.sql.cassandra")
+    .options(**CASSANDRA_CONF)
+    .options(keyspace="anp", table="precos_combustiveis_por_produto_e_uf")
+    .load()
+)
+```
+
+O notebook `consulta.ipynb` tem a documentação sobre as manipulações de dados com PySpark para a questão de negócio proposta.
+
+## Propostas de trabalho futuro
+
+- Execução do projeto em infraestrutura de cluster
+- Modelagem de novas tabelas para outras questões do negócio
 
 ## Referências
 
